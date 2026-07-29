@@ -54,7 +54,7 @@ python3 client.py
 
 ---
 
-## 🌐 Deploying to a Remote VPS (Linux / `systemd`)
+## 🌐 Deploy
 
 To run the Spectre server continuously on a VPS (e.g., DigitalOcean, Hetzner, Linode):
 
@@ -94,6 +94,11 @@ sudo systemctl enable --now spectre
 ```
 
 
+## 🐳 Deploy with Docker
+
+```bash
+docker run -p 8888:8888 ghcr.io/ttrcharlie/spectre:latest
+```
 
 ---
 
