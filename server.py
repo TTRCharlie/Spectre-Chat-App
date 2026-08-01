@@ -12,6 +12,37 @@ from typing import Dict
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CERT_FILE = os.path.join(BASE_DIR, "server.crt")
 KEY_FILE = os.path.join(BASE_DIR, "server.key")
+CONFIG_FILE = os.path.join(BASE_DIR, "server_config.json")
+
+def load_or_create_config() -> dict:
+    """Loads configuration from config.json, or creates it with defaults if missing."""
+    default_config = {
+        "host": "0.0.0.0",
+        "port": 8888
+    }
+    
+    if not os.path.exists(CONFIG_FILE):
+        print(f"[+] Generating default configuration file at '{CONFIG_FILE}'...")
+        try:
+            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+                json.dump(default_config, f, indent=4)
+        except Exception as e:
+            print(f"[-] Failed to create config file: {e}")
+        return default_config
+
+    try:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            config = json.load(f)
+            # Ensure essential keys exist
+            for key, val in default_config.items():
+                if key not in config:
+                    config[key] = val
+            return config
+    except Exception as e:
+        print(f"[-] Error reading '{CONFIG_FILE}', falling back to defaults: {e}")
+        return default_config
+
+CONFIG = load_or_create_config()
 
 def get_clean_env():
     """Remove PyInstaller's library overrides so subprocess calls use system shared libs."""
@@ -47,7 +78,9 @@ def get_utc_timestamp() -> str:
 def init_db():
     conn = sqlite3.connect("chat_data.db")
     cur = conn.cursor()
-    
+    cur.execute("PRAGMA journal_mode=WAL;")
+    cur.execute("PRAGMA synchronous=NORMAL;")
+    cur.execute("PRAGMA foreign_keys=ON;")
     cur.execute("""
         CREATE TABLE IF NOT EXISTS users (
             username TEXT PRIMARY KEY,
@@ -109,8 +142,10 @@ def init_db():
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    
-    # Backwards compatibility migration check: ensure 'timestamp' column exists
+
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_messages_lookup ON messages(msg_type, target, channel);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);")
+
     cur.execute("PRAGMA table_info(messages)")
     columns = [row[1] for row in cur.fetchall()]
     if "timestamp" not in columns:
@@ -160,11 +195,16 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
     username = None
     try:
         while True:
-            raw_data = await reader.read(8192)
-            if not raw_data:
+            line = await reader.readline()
+            if not line:
                 break
             
-            payload = json.loads(raw_data.decode('utf-8'))
+            try:
+                payload = json.loads(line.decode('utf-8').strip())
+            except (json.JSONDecodeError, UnicodeDecodeError) as err:
+                print(f"[-] Invalid payload received from client: {err}")
+                continue
+            
             action = payload.get("action")
 
             if action == "connect":
@@ -212,8 +252,14 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
 
             elif action == "fetch_history":
                 target_type = payload.get("target_type")
-                target = payload.get("target").lstrip('@')
-                channel = payload.get("channel", "general").lstrip('#')
+                
+                # Safely handle target stripping
+                raw_target = payload.get("target") or ""
+                target = raw_target.lstrip('@')
+                
+                # Safely handle channel stripping when channel is None
+                raw_channel = payload.get("channel") or "general"
+                channel = raw_channel.lstrip('#')
 
                 conn = sqlite3.connect("chat_data.db")
                 cur = conn.cursor()
@@ -315,7 +361,9 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                 await send_unread_notifications(username)
 
             elif action == "mark_read":
-                target = payload.get("target").lstrip('@')
+                raw_target = payload.get("target") or ""
+                target = raw_target.lstrip('@')
+                
                 conn = sqlite3.connect("chat_data.db")
                 cur = conn.cursor()
                 cur.execute("""
@@ -501,22 +549,36 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                         "timestamp": now
                     }) + "\n"
 
-                    for member in members:
-                        if member in ACTIVE_USERS:
-                            m_writer = ACTIVE_USERS[member]["writer"]
+                    async def send_to_member(m_writer):
+                        try:
                             m_writer.write(out.encode())
                             await m_writer.drain()
+                        except Exception as e:
+                            print(f"[-] Failed sending message to user: {e}")
+
+                    tasks = [
+                        send_to_member(ACTIVE_USERS[member]["writer"])
+                        for member in members if member in ACTIVE_USERS
+                    ]
+                    if tasks:
+                        await asyncio.gather(*tasks, return_exceptions=True)
+
                 conn.close()
 
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"[-] Client connection error ({username or 'unauthenticated'}): {exc}", file=sys.stderr)
     finally:
         if username and username in ACTIVE_USERS:
             del ACTIVE_USERS[username]
+        writer.close()
+        await writer.wait_closed()
 
 async def main():
-    server = await asyncio.start_server(handle_client, '0.0.0.0', 8888, ssl=ssl_ctx)
-    print("Encrypted Spectre Community server online on port 8888...")
+    host = CONFIG.get("host", "0.0.0.0")
+    port = CONFIG.get("port", 8888)
+
+    server = await asyncio.start_server(handle_client, host, port, ssl=ssl_ctx)
+    print(f"Encrypted Spectre Community server online on {host}:{port}...")
     async with server:
         await server.serve_forever()
 
