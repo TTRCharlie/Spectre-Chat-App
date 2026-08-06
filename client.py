@@ -7,6 +7,7 @@ import sys
 import hashlib
 import uuid
 from rich.markup import escape
+from textual import work
 from textual.app import App, ComposeResult
 from textual.screen import Screen
 from textual.widgets import Button, Footer, Header, Input, RichLog, Static
@@ -20,6 +21,7 @@ def get_base_dir():
 BASE_DIR = get_base_dir()
 IDENTITY_FILE = os.path.join(BASE_DIR, "identity.json")
 CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
+CLIENT_PROTOCOL_VERSION = "2.0"
 
 ssl_ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
 ssl_ctx.check_hostname = False
@@ -77,7 +79,6 @@ def format_timestamp(ts_str: str | None) -> str:
         return "[dim][1970-01-01 00:00][/dim]"
     
     try:
-        # Handle ISO strings ending in Z or standard ISO offset formats
         if ts_str.endswith("Z"):
             ts_str = ts_str[:-1] + "+00:00"
         
@@ -86,18 +87,64 @@ def format_timestamp(ts_str: str | None) -> str:
         now_local = datetime.now()
         
         if dt_local.date() == now_local.date():
-            # Same day: "Today HH:MM"
             time_formatted = f"Today {dt_local.strftime('%H:%M')}"
         elif dt_local.year == now_local.year:
-            # Same year, different day: "MM-DD HH:MM"
             time_formatted = dt_local.strftime("%m-%d %H:%M")
         else:
-            # Different year: "YYYY-MM-DD HH:MM"
             time_formatted = dt_local.strftime("%Y-%m-%d %H:%M")
             
         return f"[dim][{time_formatted}][/dim]"
     except Exception:
         return "[dim][1970-01-01 00:00][/dim]"
+
+class ConfirmFingerprintScreen(Screen):
+    """Modal screen that blocks execution until the user manually trusts the fingerprint."""
+    CSS = """
+    ConfirmFingerprintScreen {
+        align: center middle;
+    }
+    #dialog {
+        padding: 1 2;
+        border: thick $background 80%;
+        background: $surface;
+        width: 60;
+        height: auto;
+    }
+    #title {
+        text-align: center;
+        text-style: bold;
+        color: $warning;
+        margin-bottom: 1;
+    }
+    #fp_text {
+        margin: 1 0;
+    }
+    #buttons {
+        margin-top: 1;
+        align: center middle;
+    }
+    Button {
+        margin: 0 1;
+    }
+    """
+
+    def __init__(self, fingerprint: str):
+        super().__init__()
+        self.fingerprint = fingerprint
+
+    def compose(self) -> ComposeResult:
+        yield Static("UNKNOWN SERVER FINGERPRINT", id="title")
+        yield Static("First time connecting. Verify this SHA-256 fingerprint out-of-band:")
+        yield Static(f"[bold cyan]{self.fingerprint}[/bold cyan]", id="fp_text")
+        yield Static("Trust and anchor this certificate?")
+        yield Button("Trust & Connect", id="trust_btn", variant="success")
+        yield Button("Abort", id="abort_btn", variant="error")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "trust_btn":
+            self.dismiss(True)
+        else:
+            self.dismiss(False)
 
 class SetupScreen(Screen):
     CSS = """
@@ -133,6 +180,8 @@ class SetupScreen(Screen):
         yield Input(value="127.0.0.1", id="setup_host")
         yield Static("Port:", classes="setup_label")
         yield Input(value="8888", id="setup_port")
+        yield Static("Server SHA-256 Fingerprint (Optional):", classes="setup_label")
+        yield Input(value="", id="setup_fp", placeholder="Optional fingerprint for TOFU protection")
         yield Button("Connect", id="setup_btn", variant="primary")
 
     def on_button_pressed(self, event):
@@ -145,6 +194,8 @@ class SetupScreen(Screen):
         username = self.query_one("#setup_user", Input).value.strip()
         host = self.query_one("#setup_host", Input).value.strip() or "127.0.0.1"
         port_str = self.query_one("#setup_port", Input).value.strip()
+        fp_str = self.query_one("#setup_fp", Input).value.strip().lower() or None
+
         try:
             port = int(port_str)
         except ValueError:
@@ -153,10 +204,7 @@ class SetupScreen(Screen):
         if not username or not host:
             return  
 
-        if not port_str:
-            port_str = "8888"
-
-        save_config(username, host, port)
+        save_config(username, host, port, cert_fingerprint=fp_str)
         self.dismiss((username, host, port))
 
 class SpectreClient(App):
@@ -234,8 +282,9 @@ class SpectreClient(App):
             self.host = config.get("host", "127.0.0.1")
             self.port = config.get("port", 8888)
             if self.username:
-                await self.connect_to_server()
+                self.connect_to_server()
 
+    @work
     async def connect_to_server(self):
         log = self.query_one(RichLog)
         try:
@@ -245,24 +294,36 @@ class SpectreClient(App):
             saved_fp = config.get("cert_fingerprint")
             
             valid, current_fp = verify_server_fingerprint(self.writer, saved_fp)
-            if not valid:
-                log.write("[bold red][CRITICAL] TLS Security Alert: Server certificate fingerprint mismatch![/bold red]")
-                log.write("[red]Connection aborted to prevent potential Man-in-the-Middle attack.[/red]")
-                self.writer.close()
-                return
-            
-            if saved_fp != current_fp:
+
+            if saved_fp is None:
+                # Pause connection and prompt user visually before transmitting credentials
+                trusted = await self.push_screen_wait(ConfirmFingerprintScreen(current_fp))
+                if not trusted:
+                    log.write("[bold red]Connection aborted: Server fingerprint rejected.[/bold red]")
+                    self.writer.close()
+                    await self.writer.wait_closed()
+                    return
+
                 save_config(self.username, self.host, self.port, cert_fingerprint=current_fp)
                 log.write(f"[dim green]Anchored server TLS fingerprint: {current_fp[:16]}...[/dim green]")
 
-            conn_payload = {"action": "connect", "username": self.username, "token": self.token}
+            elif not valid:
+                log.write("[bold red][CRITICAL] TLS Security Alert: Server certificate fingerprint mismatch![/bold red]")
+                log.write("[red]Connection aborted to prevent potential Man-in-the-Middle attack.[/red]")
+                self.writer.close()
+                await self.writer.wait_closed()
+                return
+            
+            conn_payload = {
+                "action": "connect", 
+                "username": self.username, 
+                "token": self.token, 
+                "protocol_version": CLIENT_PROTOCOL_VERSION
+            }
             
             if await self.send_json(conn_payload):
-                log.write("[dim]For a list of commands do: /help | To exit Spectre hit ctrl+q[/dim]\n")
                 asyncio.create_task(self.listen_server())
-
-                await asyncio.sleep(0.2)
-                await self.send_json({"action": "list_all"})
+    
         except Exception as e:
             log.write(f"[bold red]Connection error: {e}[/bold red]")
 
@@ -274,7 +335,7 @@ class SpectreClient(App):
         self.username = username
         self.host = host
         self.port = port
-        asyncio.create_task(self.connect_to_server())
+        self.connect_to_server()
 
     async def switch_target(self, target_str: str):
         is_dm = target_str.startswith("@")
@@ -307,6 +368,13 @@ class SpectreClient(App):
                 
                 if data.get("status") == "error":
                     log.write(f"[bold red]{data['msg']}[/bold red]")
+
+                elif data.get("status") == "ok":
+                    log.write(f"[bold green]{data['msg']}[/bold green]")
+                    log.write("[dim]For a list of commands do: /help | To exit Spectre hit ctrl+q[/dim]")
+                    
+                    await self.send_json({"action": "list_all"})
+
                 elif "msg" in data:
                     log.write(f"[bold yellow]{data['msg']}[/bold yellow]")
 
@@ -324,7 +392,6 @@ class SpectreClient(App):
                     tgt = data["target"]
                     chn = data.get("channel")
                     
-                    # State update ONLY on valid server confirmation
                     self.is_dm = (ttype == "dm")
                     self.active_target = tgt
                     if ttype == "server":
