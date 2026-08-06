@@ -107,15 +107,16 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now spectre
 
 ```
----
-
-## 📁 Project Configuration Files
 
 ## 🐳 Deploy with Docker
 
 ```bash
 docker run -p 8888:8888 ghcr.io/ttrcharlie/spectre:latest
 ```
+---
+
+## 📁 Project Configuration Files
+
 | File | Scope | Description |
 | --- | --- | --- |
 | `config.json` | Client | Stores host, port, username, and anchored server TLS fingerprint. |
