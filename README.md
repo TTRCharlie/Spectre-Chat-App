@@ -108,8 +108,6 @@ sudo systemctl enable --now spectre
 ```
 ---
 
-## 📁 Project Configuration Files
-
 ## 🐳 Deploy with Docker
 
 
