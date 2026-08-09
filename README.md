@@ -96,8 +96,14 @@ sudo systemctl enable --now spectre
 
 ## 🐳 Deploy with Docker
 
+1. **Build:**
 ```bash
-docker run -p 8888:8888 ghcr.io/ttrcharlie/spectre:latest
+docker build . -t spectre-chat
+```
+
+2. **Run:**
+```bash
+docker run -d -p 8888:8888 --name spectre-chat spectre
 ```
 
 ---
