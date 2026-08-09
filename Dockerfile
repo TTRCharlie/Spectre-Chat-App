@@ -7,7 +7,7 @@ RUN pip install pyinstaller textual rich;pyinstaller --onefile --name spectre-se
 
 FROM alpine AS runner
 WORKDIR /app
-COPY --from=builder /app/dist/spectre-server /app/spectre-server
+COPY --from=builder /app/dist/spectre-server ./spectre-server
 RUN apk add --no-cache openssl
 EXPOSE 8888
 ENTRYPOINT ["/app/spectre-server"]
