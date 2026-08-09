@@ -1,5 +1,4 @@
 FROM python:3.15.0b4-alpine3.24 AS builder
-LABEL org.opencontainers.image.source https://github.com/TTRCharlie/Spectre-Chat-App
 RUN apk add --no-cache build-base
 WORKDIR /app
 COPY . ./
