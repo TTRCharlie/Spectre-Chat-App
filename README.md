@@ -69,7 +69,7 @@ python3 client.py
 
 ---
 
-## 🌐 Deploying to a Remote VPS (Linux / `systemd`)
+## 🌐 Deploy
 
 To run the Spectre server continuously on a VPS (e.g., DigitalOcean, Hetzner, Linode):
 
@@ -77,7 +77,6 @@ To run the Spectre server continuously on a VPS (e.g., DigitalOcean, Hetzner, Li
 ```bash
 sudo ufw allow 8888/tcp
 sudo ufw reload
-
 ```
 
 
@@ -109,6 +108,26 @@ sudo systemctl enable --now spectre
 ```
 ---
 
+## 🐳 Deploy with Docker
+
+
+1. **Configure Firewall:** Open TCP port `8888`:
+```bash
+sudo ufw allow 8888/tcp
+sudo ufw reload
+```
+
+2. **Build:**
+```bash
+docker build . -t spectre-chat
+```
+
+3. **Run:**
+```bash
+docker run -d -p 8888:8888 --name spectre-chat spectre
+```
+---
+
 ## 📁 Project Configuration Files
 
 | File | Scope | Description |
@@ -118,8 +137,6 @@ sudo systemctl enable --now spectre
 | `server_config.json` | Server | Server port and binding IP configuration. |
 | `chat_data.db` | Server | SQLite database housing channels, messages, user mappings, and servers. |
 | `server.crt` / `.key` | Server | TLS certificates auto-generated via OpenSSL. |
-
----
 
 ## 🔑 Commands Reference
 
