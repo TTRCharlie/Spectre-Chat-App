@@ -111,8 +111,17 @@ docker build . -t spectre-chat
 ```bash
 docker run -d -p 8888:8888 --name spectre-chat spectre
 ```
-
 ---
+
+## 📁 Project Configuration Files
+
+| File | Scope | Description |
+| --- | --- | --- |
+| `config.json` | Client | Stores host, port, username, and anchored server TLS fingerprint. |
+| `identity.json` | Client | Contains your unique cryptographic identity token. Ties your username to your identity on servers and can be transferred across computers. |
+| `server_config.json` | Server | Server port and binding IP configuration. |
+| `chat_data.db` | Server | SQLite database housing channels, messages, user mappings, and servers. |
+| `server.crt` / `.key` | Server | TLS certificates auto-generated via OpenSSL. |
 
 ## 🔑 Commands Reference
 
