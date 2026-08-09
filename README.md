@@ -62,7 +62,6 @@ To run the Spectre server continuously on a VPS (e.g., DigitalOcean, Hetzner, Li
 ```bash
 sudo ufw allow 8888/tcp
 sudo ufw reload
-
 ```
 
 
@@ -96,12 +95,19 @@ sudo systemctl enable --now spectre
 
 ## 🐳 Deploy with Docker
 
-1. **Build:**
+
+1. **Configure Firewall:** Open TCP port `8888`:
+```bash
+sudo ufw allow 8888/tcp
+sudo ufw reload
+```
+
+2. **Build:**
 ```bash
 docker build . -t spectre-chat
 ```
 
-2. **Run:**
+3. **Run:**
 ```bash
 docker run -d -p 8888:8888 --name spectre-chat spectre
 ```
