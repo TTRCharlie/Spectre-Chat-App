@@ -124,7 +124,7 @@ docker build . -t spectre-chat
 
 3. **Run:**
 ```bash
-docker run -d -p 8888:8888 --name spectre-chat spectre
+docker run -d -p 8888:8888 spectre-chat
 ```
 ---
 
@@ -160,6 +160,8 @@ Inside the client TUI:
 | `shift+ctrl+c` | Copy selected text |
 | `shift+ctrl+v` | Paste clipboard text |
 | `ctrl+q` | Exit Spectre |
+---
+
 ---
 
 ## ⚡ Protocol & Versioning
